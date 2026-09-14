@@ -1,0 +1,7 @@
+{
+  "claim_id": "CLM-001",
+  "customer_id": "CUST-001",
+  "claim_amount": 2400,
+  "policy_active": true,
+  "damage_verified": true
+}
