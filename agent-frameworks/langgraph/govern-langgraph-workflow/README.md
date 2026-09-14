@@ -72,6 +72,8 @@ Claim: CLM-001
 Policy active: true
 Damage verified: true
 Decision: APPROVED
+BHANUJ execution ID: ae380ac2-9004-4c78-b4e1-a33d730a40da
+BHANUJ evidence status: SUCCEEDED
 ```
 
 ## Enable Agents Runtime evidence
