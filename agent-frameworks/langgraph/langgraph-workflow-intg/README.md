@@ -1,6 +1,6 @@
-# Govern a LangGraph workflow with BHANUJ - AI Governance Platform
+# Integrate LangGraph workflow with BHANUJ - AI Governance Platform
 
-This repository is the starting point for the **Govern a LangGraph workflow
+This repository is the starting point for the **How to integrate LangGraph workflow
 with BHANUJ - AI Governance Platform** guide. It uses the AI Governance Control Plane
 Agents Runtime API to observe one external LangGraph execution without
 controlling it.

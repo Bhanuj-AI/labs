@@ -1,4 +1,4 @@
-# Govern a Google ADK Workflow with BHANUJ
+# Integrate Google ADK Workflow with BHANUJ
 
 This lab is a small, deterministic [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/) workflow with optional BHANUJ Agents Runtime evidence. It uses eight local `FunctionNode` stages, an in-memory ADK session, and fixture data only—no model, cloud account, database, or credentials are needed.
 
