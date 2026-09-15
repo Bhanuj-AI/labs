@@ -1,0 +1,12 @@
+{
+  "POL-100": {
+    "policy_number": "POL-100",
+    "status": "ACTIVE",
+    "coverage_limit": 5000
+  },
+  "POL-200": {
+    "policy_number": "POL-200",
+    "status": "INACTIVE",
+    "coverage_limit": 5000
+  }
+}
