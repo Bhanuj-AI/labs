@@ -1,0 +1,39 @@
+[project]
+name = "openai-agent-runtime"
+version = "0.1.0"
+description = "External OpenAI Responses API runtime for governed controlled Replay."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bhanuj-governance-plugin-api>=1.0,<2",
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    # OSS's current TruLens integration is compatible with the official 1.x
+    # SDK line; it includes the Responses API used by this runtime.
+    "openai>=1.52.1,<2.0.0",
+    "pydantic>=2.0",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+openai-runtime = "openai_agent_runtime.cli:main"
+
+[project.entry-points."bhanuj.governance.plugins"]
+openai-agent-runtime = "openai_agent_runtime.plugin:OpenAIAgentRuntimePlugin"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_agent_runtime"]
+
+[tool.pytest.ini_options]
+markers = [
+    "openai: opt-in tests that make real OpenAI API calls",
+    "integration: opt-in tests that require a running Core and replay worker",
+]
+testpaths = ["tests"]
