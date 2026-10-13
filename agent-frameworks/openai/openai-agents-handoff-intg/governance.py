@@ -1,4 +1,4 @@
-"""Fail-open BHANUJ evidence adapter for public OpenAI Agents SDK hooks.
+"""Fail-open AIGP evidence adapter for public OpenAI Agents SDK hooks.
 
 Handoffs are orchestration ownership transitions, not business function-tool
 invocations. The adapter therefore records the transition on paired agent

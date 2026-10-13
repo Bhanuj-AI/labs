@@ -70,9 +70,9 @@ def main() -> None:
     if client:
         execution_id = getattr(evidence, "execution_id", None)
         if execution_id:
-            print(f"BHANUJ execution ID: {execution_id}")
+            print(f"AIGP execution ID: {execution_id}")
         else:
-            print("BHANUJ evidence delivery: unavailable (workflow result preserved)")
+            print("AIGP evidence delivery: unavailable (workflow result preserved)")
 
 
 if __name__ == "__main__":

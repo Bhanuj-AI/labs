@@ -1,4 +1,4 @@
-"""Run the Claude policy-validation workflow with optional BHANUJ evidence."""
+"""Run the Claude policy-validation workflow with optional AIGP evidence."""
 
 from __future__ import annotations
 

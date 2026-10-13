@@ -75,7 +75,7 @@ export AI_GOVERNANCE_PROJECT_ID=project_default
 python app.py
 ```
 
-The CLI prints a BHANUJ execution ID when the execution-start request is accepted. Use that ID in Agents Runtime to inspect the evidence timeline.
+The CLI prints a AIGP execution ID when the execution-start request is accepted. Use that ID in Agents Runtime to inspect the evidence timeline.
 
 The lab reuses the public Agents Runtime contracts:
 

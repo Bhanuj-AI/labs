@@ -95,7 +95,7 @@ export AI_GOVERNANCE_PROJECT_ID=project_default
 python app.py
 ```
 
-The app prints a BHANUJ execution ID and `BHANUJ evidence status: SUCCEEDED`
+The app prints a AIGP execution ID and `AIGP evidence status: SUCCEEDED`
 when the complete evidence sequence is accepted. Find that execution ID in
 Agents Runtime to inspect the same ordered event timeline.
 

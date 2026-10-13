@@ -32,10 +32,10 @@ def main() -> None:
 
     print(f"Agent result: {result.final_output}")
     if reporter.status is not EvidenceStatus.DISABLED:
-        print(f"BHANUJ execution ID: {reporter.execution_id or 'unavailable'}")
-        print(f"BHANUJ evidence status: {reporter.status.value}")
+        print(f"AIGP execution ID: {reporter.execution_id or 'unavailable'}")
+        print(f"AIGP evidence status: {reporter.status.value}")
         if reporter.error:
-            print(f"BHANUJ evidence error: {reporter.error}")
+            print(f"AIGP evidence error: {reporter.error}")
 
 
 if __name__ == "__main__":

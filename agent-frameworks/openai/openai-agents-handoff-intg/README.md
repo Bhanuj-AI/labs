@@ -97,7 +97,7 @@ export AI_GOVERNANCE_PROJECT_ID=project_default
 python app.py
 ```
 
-The CLI prints the execution ID and `BHANUJ evidence status: SUCCEEDED`
+The CLI prints the execution ID and `AIGP evidence status: SUCCEEDED`
 when all evidence was accepted. Find that ID in Agents Runtime to inspect the
 active-agent transition and the single `lookup_policy` tool call.
 

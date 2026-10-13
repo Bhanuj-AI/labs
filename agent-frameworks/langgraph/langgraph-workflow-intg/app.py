@@ -25,10 +25,10 @@ def main() -> None:
     print(f"Damage verified: {str(result['damage_verified']).lower()}")
     print(f"Decision: {result['decision']}")
     if reporter.status is not EvidenceStatus.DISABLED:
-        print(f"BHANUJ execution ID: {reporter.execution_id or 'unavailable'}")
-        print(f"BHANUJ evidence status: {reporter.status.value}")
+        print(f"AIGP execution ID: {reporter.execution_id or 'unavailable'}")
+        print(f"AIGP evidence status: {reporter.status.value}")
         if reporter.error:
-            print(f"BHANUJ evidence error: {reporter.error}")
+            print(f"AIGP evidence error: {reporter.error}")
 
 
 if __name__ == "__main__":
