@@ -89,25 +89,38 @@ The agent is usable without AIGP for this unprotected operation. No model, cloud
 
 ## 2. Register execution
 
-Start the OSS API from its own checkout in a separate terminal:
+Start the Compose-based OSS stack from its own checkout in a separate terminal. This is the verified local path used by this guide; the API is exposed on port `8000`.
 
 ```bash
 cd /path/to/ai-governance-oss
-AI_GOVERNANCE_AUTH_MODE=development \
-  uv run uvicorn ai_governance.api.app:app --host 127.0.0.1 --port 8012 --reload
+./servers.sh up
+./servers.sh ps
+curl --fail http://localhost:8000/ready
 ```
 
-This guide deliberately uses port `8012`, rather than the common default `8000`, so it does not accidentally target an already-running token-authenticated control plane. Back in this lab, configure the existing public API contract. `.env.example` is a template; export the values in your shell or load them with your preferred local environment tool.
+Before starting the stack, configure the `ai-governance-platform` service for local development authentication:
+
+```text
+# .env.platform
+AI_GOVERNANCE_AUTH_MODE=development
+
+# docker-compose.yml → services.ai-governance-platform → environment
+AI_GOVERNANCE_AUTH_MODE: development
+```
+
+Compose `environment` values override values from `env_file`. Therefore, if `docker-compose.yml` explicitly sets the platform mode to `keycloak`, changing only `.env.platform` does **not** change the API running on port `8000`. Keep the two values aligned when other Compose services load `.env.platform`; the explicit platform value is the effective source for the REST API. This lab does not call the MCP HTTP container, so do not change its separate authentication setting for this tutorial.
+
+Back in this lab, configure the existing public API contract. `.env.example` is a template; export the values in your shell or load them with your preferred local environment tool.
 
 ```bash
-export AI_GOVERNANCE_BASE_URL=http://127.0.0.1:8012
+export AI_GOVERNANCE_BASE_URL=http://localhost:8000
 export AI_GOVERNANCE_ORGANIZATION_ID=org_default
 export AI_GOVERNANCE_PROJECT_ID=project_default
 export AI_GOVERNANCE_ACTOR_ID=local-admin
 python app.py readonly --database /tmp/bhanuj-langgraph-registered.db
 ```
 
-If you intentionally target a token-authenticated API instead, retain its URL and set `AI_GOVERNANCE_ACCESS_TOKEN` to a valid bearer token. A `401` means that API rejected the supplied credentials; organization, project, and actor headers alone do not authenticate a request.
+If you intentionally target a Keycloak-authenticated API instead, retain its URL and set `AI_GOVERNANCE_ACCESS_TOKEN` to a valid bearer token. A `401` means that API rejected the supplied credentials; organization, project, and actor headers alone do not authenticate a request.
 
 Expected checkpoint:
 
@@ -242,7 +255,7 @@ They verify real SQLite state, read-only evidence, registration/evidence failure
 To execute the real OSS API integration test, start the API as in Chapter 2 and run:
 
 ```bash
-export BHANUJ_LAB_INTEGRATION_BASE_URL=http://127.0.0.1:8012
+export BHANUJ_LAB_INTEGRATION_BASE_URL=http://localhost:8000
 export BHANUJ_LAB_INTEGRATION_ORGANIZATION_ID=org_default
 export BHANUJ_LAB_INTEGRATION_PROJECT_ID=project_default
 export BHANUJ_LAB_INTEGRATION_ACTOR_ID=local-admin
