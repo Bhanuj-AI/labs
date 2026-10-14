@@ -6,8 +6,9 @@ This report records the public contracts used by the LangGraph developer guide. 
 
 | Capability | Public OSS contract | Lab use | Verification |
 | --- | --- | --- | --- |
-| Execution registration | `POST /api/v1/agent-executions` | Registers `runtime_provider=langgraph`, a stable external execution ID, correlation ID, and bounded metadata. | Optional integration test retrieves the created execution. |
-| Event ingestion | `POST /api/v1/agent-executions/{execution_id}/events` | Sends only supported `WORKFLOW_STEP`, `TOOL_CALL`, `GOVERNANCE_DECISION`, and `ERROR` events. | Unit tests simulate accepted responses; optional integration test validates real acceptance and retrieval. |
+| Execution registration | `POST /api/v1/agent-executions` | Registers the actual LangGraph run ID as `external_execution_id`, returns canonical AIGP `execution_id`, and retains optional thread ID only as bounded metadata. | Unit tests prove same-thread runs remain distinct; optional integration test retrieves the created execution. |
+| Runtime authorization | `POST /api/v1/runtime-action-authorizations/authorize` | Sends the canonical AIGP execution ID plus a registered action, resource, bounded context, correlation, and idempotency key. Tenant/actor claims remain transport-owned. | Unit test validates request binding; local API integration can exercise real policy decisions. |
+| Event ingestion | `POST /api/v1/agent-executions/{execution_id}/events` | Sends only supported `WORKFLOW_STEP`, `TOOL_CALL`, fixture-only `GOVERNANCE_DECISION`, and `ERROR` events. | Unit tests simulate accepted responses; optional integration test validates real acceptance and retrieval. |
 | Event idempotency | Event `idempotency_key` | Node lifecycle events and each actual tool invocation use deterministic keys. | Unit and optional integration tests submit one duplicate payload and expect one logical event. |
 | Terminal finalization | `POST /api/v1/agent-executions/{execution_id}/complete` | Uses only `SUCCEEDED`, `FAILED`, and `CANCELLED`. | Unit tests cover all three terminal states; optional integration test reads `SUCCEEDED`. |
 | Evidence retrieval | `GET /api/v1/agent-executions/{execution_id}` | The guide uses `curl`; integration test reads execution plus timeline. | Optional integration test. |
@@ -15,15 +16,29 @@ This report records the public contracts used by the LangGraph developer guide. 
 
 The guide deliberately does not write to a BHANUJ database, ontology, graph, replay store, or Enterprise package.
 
-`runtime_tool_call_id` is unique within an execution. The lab therefore emits exactly one `TOOL_CALL` event, carrying the completed outcome, for each actual SQLite invocation. It records the preceding simulated authorization as a separate `GOVERNANCE_DECISION`; it does not invent a request-phase tool event with the same native identity.
+`runtime_tool_call_id` is unique within an execution. The lab therefore emits
+exactly one `TOOL_CALL` event, carrying the completed outcome, for each actual
+SQLite invocation. An authoritative AIGP allow decision is already persisted as
+`RUNTIME_ACTION_AUTHORIZATION`; the tool event cites that decision ID as its
+causation ID. Offline fixtures alone use a separate,
+`simulated-lab-fixture`-labelled `GOVERNANCE_DECISION` event.
 
-## Policy Authorization Gap
+## Runtime Authorization
 
-OSS has a generic governance-decision interface, but its target vocabulary covers platform governance entities such as candidates, experiments, prompt/model/dataset versions, evaluation results, jobs, and governance decisions. It is not a public contract for externally authorizing an operational database action with actor, tenant, action, resource, and execution facts.
+The lab reuses the OSS versioned runtime-action authorization SDK and its
+fail-closed `LangGraphOperationAuthorizer`. It does not call the generic
+governance-decision interface. The adapter maps one protected SQLite mutation
+to `operations.update_status` on a `sqlite.row` resource and validates the
+server-derived actor, canonical execution, action, resource, context
+fingerprint, idempotency key, and expiry before mutation.
 
-Therefore this guide does **not** call the generic decision interface to authorize SQLite. `SimulatedOperationAuthorizer` is a local deterministic fixture. Its decision observations are labelled `simulated-lab-fixture` and never presented as BHANUJ policy decisions.
+The selected AIGP policy must target `AgentExecution` and opt in through
+`runtime_action_authorization` metadata that registers the action and resource
+type. Missing or inactive policy, unregistered operation, denied policy,
+invalid response, expiry, or transport failure blocks the mutation.
 
-An authoritative future integration would require a separately approved, versioned public operation-authorization contract. It must be introduced by the control plane, not invented by this lab.
+`SimulatedOperationAuthorizer` is retained only for deterministic educational
+scenarios and tests. Its evidence is always labelled `simulated-lab-fixture`.
 
 ## Enterprise Boundary
 
@@ -41,7 +56,11 @@ Accordingly, causal audit, deterministic replay, and counterfactual simulation a
 
 1. Run the read-only LangGraph workflow without any BHANUJ configuration.
 2. Configure tenant-scoped REST access and register the same workflow execution.
-3. Emit bounded node, completed-tool, simulated-decision, error, and terminal facts.
-4. Exercise local simulated allow/deny/outage behavior at the single protected-write boundary.
-5. Exercise registration/evidence failures and cancelled/failed finalization.
-6. Retrieve the persisted OSS timeline and run the optional real-API integration test.
+3. Use the returned canonical execution ID for every authorization, event,
+   retrieval, and finalization call.
+4. Emit bounded node, completed-tool, error, and terminal facts; connect an
+   actual tool event to its authoritative decision when allowed.
+5. Exercise AIGP allow/deny/outage behavior and the offline fixtures at the
+   single protected-write boundary.
+6. Exercise registration/evidence failures and cancelled/failed finalization.
+7. Retrieve the persisted OSS timeline and run the optional real-API integration test.

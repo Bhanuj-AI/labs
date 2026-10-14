@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
 
 import pytest
-
 from governance import (
     AgentsRuntimeClient,
     EvidenceStatus,
@@ -16,13 +17,14 @@ from governance import (
 )
 from operations import OperationIntent, OperationRequest, OperationsRepository
 from policy import (
+    AIGPRuntimeActionAuthorizer,
     AuthorizationOutcome,
     FixtureOperationAuthorizer,
     OperationAuthorizer,
     SimulatedOperationAuthorizer,
     UnsupportedOperationAuthorizer,
 )
-from workflow import WorkflowDependencies, run_workflow
+from workflow import WorkflowDependencies, run_workflow, run_workflow_async
 
 
 class InMemoryAgentsRuntimeTransport:
@@ -61,16 +63,117 @@ class InMemoryAgentsRuntimeTransport:
         return {"execution": {"execution_id": "governance-execution-001"}}
 
 
-def _request(intent: OperationIntent, **kwargs: object) -> OperationRequest:
-    return OperationRequest(
-        external_execution_id="langgraph-operations-test-001",
-        correlation_id="corr-operations-test-001",
-        actor_id="operations-assistant",
-        organization_id="org_default",
-        project_id="project_default",
-        intent=intent,
-        **kwargs,
+class InvocationIdentityTransport(InMemoryAgentsRuntimeTransport):
+    """Make the simulated public API assign one canonical ID per run ID."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._execution_ids: dict[str, str] = {}
+
+    def __call__(
+        self, url: str, headers: Mapping[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if url.endswith("/agent-executions"):
+            self.requests.append((url, headers, payload))
+            run_id = str(payload["external_execution_id"])
+            execution_id = self._execution_ids.setdefault(
+                run_id, f"governance-{len(self._execution_ids) + 1}"
+            )
+            return {"execution": {"execution_id": execution_id}}
+        return super().__call__(url, headers, payload)
+
+
+def _runtime_contracts(
+    decision: Any,
+    *,
+    reject_allow: bool = False,
+) -> tuple[SimpleNamespace, type[Any]]:
+    """Use contract-shaped fakes without importing the OSS SDK in unit tests."""
+
+    class Resource:
+        def __init__(self, resource_type: str, resource_reference: str) -> None:
+            self.resource_type = resource_type
+            self.resource_reference = resource_reference
+
+    class Request:
+        def __init__(self, **values: object) -> None:
+            self.__dict__.update(values)
+
+    class Client:
+        instances: ClassVar[list[Client]] = []
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.request: Request | None = None
+            self.__class__.instances.append(self)
+
+        def authorize(self, request: Request) -> Any:
+            self.request = request
+            return decision
+
+    class Enforcer:
+        def __init__(self, client: Client, *, actor_id: str) -> None:
+            self.client = client
+            self.actor_id = actor_id
+
+        def require_allow(self, request: Request) -> Any:
+            resolved = self.client.authorize(request)
+            if reject_allow or resolved.outcome.value != "ALLOW":
+                raise RuntimeError(resolved.reason_code)
+            return resolved
+
+    return (
+        SimpleNamespace(
+            client_type=Client,
+            enforcer_type=Enforcer,
+            request_type=Request,
+            resource_type=Resource,
+            blocked_exception_type=RuntimeError,
+        ),
+        Client,
     )
+
+
+def _aigp_decision(outcome: str, decision_id: str = "authorization-001") -> Any:
+    return SimpleNamespace(
+        outcome=SimpleNamespace(value=outcome),
+        reason_code=("ALLOW_POLICY_MATCHED" if outcome == "ALLOW" else "DENY_POLICY_MATCHED"),
+        decision_id=decision_id,
+    )
+
+
+def _aigp_authorizer(
+    monkeypatch: pytest.MonkeyPatch,
+    decision: Any,
+    *,
+    reject_allow: bool = False,
+) -> tuple[AIGPRuntimeActionAuthorizer, type[Any]]:
+    contracts, client_type = _runtime_contracts(decision, reject_allow=reject_allow)
+    monkeypatch.setattr("policy._runtime_authorization_contracts", lambda: contracts)
+    return (
+        AIGPRuntimeActionAuthorizer(
+            base_url="http://governance.test",
+            organization_id="org_default",
+            project_id="project_default",
+            expected_actor_id="runtime-service",
+            development_actor_id="runtime-service",
+        ),
+        client_type,
+    )
+
+
+def _request(intent: OperationIntent, **kwargs: object) -> OperationRequest:
+    values: dict[str, object] = {
+        "external_execution_id": "langgraph-operations-test-001",
+        "correlation_id": "corr-operations-test-001",
+        "actor_id": "operations-assistant",
+        "organization_id": "org_default",
+        "project_id": "project_default",
+        "intent": intent,
+    }
+    values.update(kwargs)
+    return OperationRequest(**values)  # type: ignore[arg-type]
 
 
 def _dependencies(
@@ -204,8 +307,157 @@ def test_absent_public_authorizer_fails_closed_before_mutation(tmp_path: Path) -
     result = run_workflow(_request(OperationIntent.WRITE), dependencies)
 
     assert result.outcome == "GOVERNANCE_UNAVAILABLE"
-    assert result.reason_code == "PUBLIC_OPERATION_AUTHORIZATION_UNAVAILABLE"
+    assert result.reason_code == "AIGP_RUNTIME_AUTHORIZATION_NOT_CONFIGURED"
     assert repository.read("OPS-001")["status"] == "PENDING"
+
+
+def test_authoritative_authorizer_binds_canonical_execution_and_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorizer, client_type = _aigp_authorizer(monkeypatch, _aigp_decision("ALLOW"))
+    request = _request(
+        OperationIntent.WRITE,
+        governance_execution_id="aigp-execution-001",
+        langgraph_thread_id="thread-shared",
+    )
+
+    decision = authorizer.authorize(request)
+
+    assert decision.outcome is AuthorizationOutcome.ALLOW
+    assert decision.decision_reference == "authorization-001"
+    client = client_type.instances[0]
+    assert client.kwargs["scope_headers"] == {
+        "X-AI-Governance-Organization-Id": "org_default",
+        "X-AI-Governance-Project-Id": "project_default",
+        "X-Correlation-Id": "corr-operations-test-001",
+        "X-Request-Id": "langgraph-operations-test-001:authorize",
+        "X-AI-Governance-Actor-Id": "runtime-service",
+    }
+    assert client.request.execution_id == "aigp-execution-001"
+    assert client.request.action_id == "operations.update_status"
+    assert client.request.resource.resource_reference == "operational-record:OPS-001"
+    assert client.request.context == {"intent": "WRITE", "requested_status": "MAINTENANCE"}
+    assert not hasattr(client.request, "actor_id")
+
+
+def test_authoritative_denial_cannot_mutate_sqlite_or_emit_fixture_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorizer, _client_type = _aigp_authorizer(monkeypatch, _aigp_decision("DENY"))
+    transport = InMemoryAgentsRuntimeTransport()
+    repository, dependencies = _dependencies(tmp_path, authorizer, _reporter(transport))
+
+    result = run_workflow(_request(OperationIntent.WRITE), dependencies)
+
+    assert result.outcome == "WRITE_DENIED"
+    assert result.reason_code == "DENY_POLICY_MATCHED"
+    assert repository.read("OPS-001")["status"] == "PENDING"
+    assert not [
+        payload
+        for payload in transport.events_by_key.values()
+        if payload["event_type"] in {"TOOL_CALL", "GOVERNANCE_DECISION"}
+    ]
+
+
+def test_invalid_authoritative_allow_cannot_mutate_sqlite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorizer, _client_type = _aigp_authorizer(
+        monkeypatch,
+        _aigp_decision("ALLOW"),
+        reject_allow=True,
+    )
+    repository, dependencies = _dependencies(
+        tmp_path,
+        authorizer,
+        _reporter(InMemoryAgentsRuntimeTransport()),
+    )
+
+    result = run_workflow(_request(OperationIntent.WRITE), dependencies)
+
+    assert result.outcome == "GOVERNANCE_UNAVAILABLE"
+    assert result.reason_code == "AUTHORIZATION_UNAVAILABLE"
+    assert repository.read("OPS-001")["status"] == "PENDING"
+
+
+def test_same_thread_different_runs_receive_isolated_aigp_executions(
+    tmp_path: Path,
+) -> None:
+    transport = InvocationIdentityTransport()
+    first_reporter = ExecutionEvidenceReporter(
+        AgentsRuntimeClient(
+            GovernanceSettings("http://governance.test", "org_default", "project_default"),
+            transport=transport,
+            sleep=lambda _seconds: None,
+        ),
+        external_execution_id="langgraph-run-1",
+        correlation_id="langgraph-run-1",
+    )
+    second_reporter = ExecutionEvidenceReporter(
+        AgentsRuntimeClient(
+            GovernanceSettings("http://governance.test", "org_default", "project_default"),
+            transport=transport,
+            sleep=lambda _seconds: None,
+        ),
+        external_execution_id="langgraph-run-2",
+        correlation_id="langgraph-run-2",
+    )
+    first_repository, first = _dependencies(
+        tmp_path / "first", FixtureOperationAuthorizer(AuthorizationOutcome.ALLOW), first_reporter
+    )
+    second_repository, second = _dependencies(
+        tmp_path / "second", FixtureOperationAuthorizer(AuthorizationOutcome.ALLOW), second_reporter
+    )
+
+    first_result = run_workflow(
+        _request(
+            OperationIntent.WRITE,
+            external_execution_id="langgraph-run-1",
+            correlation_id="langgraph-run-1",
+            langgraph_thread_id="thread-1",
+        ),
+        first,
+    )
+    second_result = run_workflow(
+        _request(
+            OperationIntent.WRITE,
+            external_execution_id="langgraph-run-2",
+            correlation_id="langgraph-run-2",
+            langgraph_thread_id="thread-1",
+        ),
+        second,
+    )
+
+    assert first_result.governance_execution_id != second_result.governance_execution_id
+    assert first_repository.read("OPS-001")["status"] == "MAINTENANCE"
+    assert second_repository.read("OPS-001")["status"] == "MAINTENANCE"
+    registrations = [
+        payload for url, _headers, payload in transport.requests if url.endswith("/agent-executions")
+    ]
+    assert [payload["external_execution_id"] for payload in registrations] == [
+        "langgraph-run-1",
+        "langgraph-run-2",
+    ]
+    assert {payload["metadata"]["langgraph_thread_id"] for payload in registrations} == {
+        "thread-1"
+    }
+
+
+def test_async_invocation_preserves_evidence_and_terminal_lifecycle(tmp_path: Path) -> None:
+    transport = InMemoryAgentsRuntimeTransport()
+    repository, dependencies = _dependencies(
+        tmp_path,
+        FixtureOperationAuthorizer(AuthorizationOutcome.ALLOW),
+        _reporter(transport),
+    )
+
+    result = asyncio.run(run_workflow_async(_request(OperationIntent.WRITE), dependencies))
+
+    assert result.outcome == "WRITE_COMPLETED"
+    assert result.evidence_status is EvidenceStatus.COMPLETED
+    assert repository.read("OPS-001")["status"] == "MAINTENANCE"
 
 
 def test_unavailable_simulated_authorizer_emits_error_evidence_and_fails_closed(

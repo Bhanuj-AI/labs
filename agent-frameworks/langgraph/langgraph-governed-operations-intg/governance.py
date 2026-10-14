@@ -14,7 +14,6 @@ from urllib.request import Request, urlopen
 
 from policy import AuthorizationDecision
 
-
 AGENT_ID = "langgraph-governed-operations"
 AGENT_NAME = "LangGraph governed operations assistant"
 AGENT_VERSION = "1.0.0"
@@ -51,6 +50,7 @@ class GovernanceSettings:
     project_id: str
     actor_id: str | None = None
     access_token: str | None = None
+    runtime_actor_id: str | None = None
 
     @classmethod
     def from_environment(cls) -> GovernanceSettings | None:
@@ -75,6 +75,10 @@ class GovernanceSettings:
             project_id=str(values["AI_GOVERNANCE_PROJECT_ID"]),
             actor_id=os.getenv("AI_GOVERNANCE_ACTOR_ID"),
             access_token=os.getenv("AI_GOVERNANCE_ACCESS_TOKEN"),
+            runtime_actor_id=(
+                os.getenv("AI_GOVERNANCE_RUNTIME_ACTOR_ID")
+                or os.getenv("AI_GOVERNANCE_ACTOR_ID")
+            ),
         )
 
 
@@ -236,7 +240,7 @@ class AgentsRuntimeClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=5) as response:  # noqa: S310 - configured URL
+            with urlopen(request, timeout=5) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             raise GovernanceDeliveryError(

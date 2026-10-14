@@ -9,10 +9,18 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import pytest
-
-from governance import AgentsRuntimeClient, EvidenceStatus, ExecutionEvidenceReporter, GovernanceSettings
+from governance import (
+    AgentsRuntimeClient,
+    EvidenceStatus,
+    ExecutionEvidenceReporter,
+    GovernanceSettings,
+)
 from operations import OperationIntent, OperationRequest, OperationsRepository
-from policy import AuthorizationOutcome, SimulatedOperationAuthorizer
+from policy import (
+    AIGPRuntimeActionAuthorizer,
+    AuthorizationOutcome,
+    SimulatedOperationAuthorizer,
+)
 from workflow import WorkflowDependencies, run_workflow
 
 
@@ -101,6 +109,77 @@ def test_running_oss_api_persists_correlated_execution_events_and_duplicates(
     assert len(probe_started) == 1
 
 
+@pytest.mark.integration
+def test_running_oss_api_authorizes_a_langgraph_sqlite_mutation(tmp_path: Path) -> None:
+    pytest.importorskip(
+        "ai_governance.runtime_authorization",
+        reason="Install the adjacent ai-governance-oss checkout for authoritative authorization.",
+    )
+    settings = _integration_settings()
+    actor_id = settings.runtime_actor_id or settings.actor_id
+    if actor_id is None:
+        pytest.skip("Set the runtime actor ID for the configured authenticated principal.")
+
+    policy_id = _create_authorization_policy(settings, actor_id)
+    external_execution_id = f"langgraph-oss-authorized-{uuid4()}"
+    reporter = ExecutionEvidenceReporter(
+        AgentsRuntimeClient(settings),
+        external_execution_id=external_execution_id,
+        correlation_id=external_execution_id,
+    )
+    repository = OperationsRepository(tmp_path / "operations.db")
+    repository.initialize()
+    request = OperationRequest(
+        external_execution_id=external_execution_id,
+        correlation_id=external_execution_id,
+        actor_id=actor_id,
+        organization_id=settings.organization_id,
+        project_id=settings.project_id,
+        intent=OperationIntent.WRITE,
+    )
+    authorizer = AIGPRuntimeActionAuthorizer(
+        base_url=settings.base_url,
+        organization_id=settings.organization_id,
+        project_id=settings.project_id,
+        expected_actor_id=actor_id,
+        access_token=settings.access_token,
+        development_actor_id=settings.actor_id,
+    )
+
+    try:
+        result = run_workflow(
+            request,
+            WorkflowDependencies(
+                repository=repository,
+                authorizer=authorizer,
+                reporter=reporter,
+            ),
+        )
+        assert result.outcome == "WRITE_COMPLETED"
+        assert repository.read("OPS-001")["status"] == "MAINTENANCE"
+        assert result.evidence_status is EvidenceStatus.COMPLETED
+        assert result.governance_execution_id is not None
+
+        detail = _get_execution(settings, result.governance_execution_id)
+        authorization_events = [
+            event
+            for event in detail["events"]
+            if event["event_type"] == "RUNTIME_ACTION_AUTHORIZATION"
+        ]
+        tool_events = [
+            event for event in detail["events"] if event["event_type"] == "TOOL_CALL"
+        ]
+        assert len(authorization_events) == 1
+        assert len(tool_events) == 1
+        assert tool_events[0]["causation_id"] == authorization_events[0]["event_id"]
+    finally:
+        _post_json(
+            settings,
+            f"/api/v1/policies/{policy_id}/versions/1/archive",
+            {"archived_by": actor_id},
+        )
+
+
 def _integration_settings() -> GovernanceSettings:
     if os.getenv("BHANUJ_LAB_INTEGRATION_ENABLED", "").lower() not in {
         "1",
@@ -123,10 +202,90 @@ def _integration_settings() -> GovernanceSettings:
         project_id=os.getenv("BHANUJ_LAB_INTEGRATION_PROJECT_ID", "project_default"),
         actor_id=os.getenv("BHANUJ_LAB_INTEGRATION_ACTOR_ID", "local-admin"),
         access_token=os.getenv("BHANUJ_LAB_INTEGRATION_ACCESS_TOKEN"),
+        runtime_actor_id=(
+            os.getenv("BHANUJ_LAB_INTEGRATION_RUNTIME_ACTOR_ID")
+            or os.getenv("BHANUJ_LAB_INTEGRATION_ACTOR_ID", "local-admin")
+        ),
     )
 
 
+def _create_authorization_policy(settings: GovernanceSettings, actor_id: str) -> str:
+    response = _post_json(
+        settings,
+        "/api/v1/policies",
+        {
+            "name": f"LangGraph runtime authorization {uuid4()}",
+            "description": "Ephemeral local integration policy.",
+            "organization_id": settings.organization_id,
+            "project_id": settings.project_id,
+            "category": "SECURITY",
+            "owner": actor_id,
+            "created_by": actor_id,
+            "target_types": ["AgentExecution"],
+            "rules": [
+                {
+                    "rule_id": "allow-operations-update",
+                    "name": "Allow operations update",
+                    "conditions": [
+                        {
+                            "field_path": "action.id",
+                            "operator": "EQUALS",
+                            "expected_value": "operations.update_status",
+                        }
+                    ],
+                    "effect": "APPROVE",
+                    "reason_template": "Allow this registered operation.",
+                    "priority": 10,
+                    "severity": "LOW",
+                }
+            ],
+            "metadata": {
+                "runtime_action_authorization": {
+                    "purpose": "runtime_action_authorization",
+                    "registered_actions": ["operations.update_status"],
+                    "registered_resource_types": ["sqlite.row"],
+                }
+            },
+        },
+    )
+    policy_id = str(response["policy_id"])
+    _post_json(
+        settings,
+        f"/api/v1/policies/{policy_id}/versions/1/activate",
+        {"activated_by": actor_id},
+    )
+    return policy_id
+
+
+def _post_json(
+    settings: GovernanceSettings,
+    path: str,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    headers = _headers(settings)
+    headers["Content-Type"] = "application/json"
+    request = Request(
+        f"{settings.base_url}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def _get_execution(settings: GovernanceSettings, execution_id: str) -> dict[str, object]:
+    headers = _headers(settings)
+    request = Request(
+        f"{settings.base_url}/api/v1/agent-executions/{execution_id}",
+        headers=headers,
+        method="GET",
+    )
+    with urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _headers(settings: GovernanceSettings) -> dict[str, str]:
     headers = {
         "X-AI-Governance-Organization-Id": settings.organization_id,
         "X-AI-Governance-Project-Id": settings.project_id,
@@ -135,10 +294,4 @@ def _get_execution(settings: GovernanceSettings, execution_id: str) -> dict[str,
         headers["X-AI-Governance-Actor-Id"] = settings.actor_id
     if settings.access_token:
         headers["Authorization"] = f"Bearer {settings.access_token}"
-    request = Request(
-        f"{settings.base_url}/api/v1/agent-executions/{execution_id}",
-        headers=headers,
-        method="GET",
-    )
-    with urlopen(request, timeout=10) as response:  # noqa: S310 - configured local URL
-        return json.loads(response.read().decode("utf-8"))
+    return headers

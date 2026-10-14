@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, TypedDict
 
-from langgraph.graph import END, START, StateGraph  # type: ignore[import-not-found]
-
 from governance import EvidenceStatus, ExecutionEvidenceReporter
+from langgraph.graph import END, START, StateGraph  # type: ignore[import-not-found]
 from operations import OperationIntent, OperationRequest, OperationsRepository
 from policy import (
     AuthorizationOutcome,
@@ -107,14 +106,28 @@ def run_workflow(
             "workflow_version": "1.0.0",
             "model_reference": "none",
             "operation_intent": request.intent.value,
+            "langgraph_run_id": request.langgraph_run_id,
+            **(
+                {"langgraph_thread_id": request.langgraph_thread_id}
+                if request.langgraph_thread_id is not None
+                else {}
+            ),
         }
     )
+    # The control plane, not LangGraph, assigns the canonical execution ID.
+    # A later protected operation receives it only after registration succeeds.
+    invocation_request = replace(
+        request,
+        governance_execution_id=reporter.execution_id,
+    )
     try:
-        state = build_workflow(dependencies).invoke({"request": request})
+        state = build_workflow(dependencies).invoke({"request": invocation_request})
     except InterruptedExecution:
         reporter.error_event("InterruptedExecution", reason_code="EXECUTION_INTERRUPTED")
         reporter.finalize("CANCELLED")
-        return _result(request, reporter, "INTERRUPTED", "EXECUTION_INTERRUPTED")
+        return _result(
+            invocation_request, reporter, "INTERRUPTED", "EXECUTION_INTERRUPTED"
+        )
     except Exception as error:
         reporter.error_event(type(error).__name__, reason_code="WORKFLOW_FAILED")
         reporter.finalize("FAILED")
@@ -128,7 +141,59 @@ def run_workflow(
     reporter.finalize(
         "FAILED" if outcome == "GOVERNANCE_UNAVAILABLE" else "SUCCEEDED"
     )
-    return _result(request, reporter, outcome, reason_code)
+    return _result(invocation_request, reporter, outcome, reason_code)
+
+
+async def run_workflow_async(
+    request: OperationRequest,
+    dependencies: WorkflowDependencies,
+) -> WorkflowRunResult:
+    """Run the same invocation contract through LangGraph's async path.
+
+    Evidence delivery stays ordered and bounded through the adapter's existing
+    synchronous public REST client. Framework applications may call this from
+    their own async lifecycle without changing execution identity or protected
+    tool semantics.
+    """
+
+    reporter = dependencies.reporter
+    reporter.start(
+        {
+            "workflow_name": "governed_operations",
+            "workflow_version": "1.0.0",
+            "model_reference": "none",
+            "operation_intent": request.intent.value,
+            "langgraph_run_id": request.langgraph_run_id,
+            **(
+                {"langgraph_thread_id": request.langgraph_thread_id}
+                if request.langgraph_thread_id is not None
+                else {}
+            ),
+        }
+    )
+    invocation_request = replace(
+        request,
+        governance_execution_id=reporter.execution_id,
+    )
+    try:
+        state = await build_workflow(dependencies).ainvoke(
+            {"request": invocation_request}
+        )
+    except InterruptedExecution:
+        reporter.error_event("InterruptedExecution", reason_code="EXECUTION_INTERRUPTED")
+        reporter.finalize("CANCELLED")
+        return _result(
+            invocation_request, reporter, "INTERRUPTED", "EXECUTION_INTERRUPTED"
+        )
+    except Exception as error:
+        reporter.error_event(type(error).__name__, reason_code="WORKFLOW_FAILED")
+        reporter.finalize("FAILED")
+        raise
+
+    outcome = str(state["outcome"])
+    reason_code = str(state.get("reason_code", "")) or None
+    reporter.finalize("FAILED" if outcome == "GOVERNANCE_UNAVAILABLE" else "SUCCEEDED")
+    return _result(invocation_request, reporter, outcome, reason_code)
 
 
 def _result(
@@ -174,7 +239,7 @@ def _protected_database_write(dependencies: WorkflowDependencies) -> Node:
         tool_call_id = f"{request.external_execution_id}:tool:operations.update_status"
         try:
             decision = dependencies.authorizer.authorize(request)
-        except Exception:
+        except Exception:  # noqa: BLE001 - protected-tool adapters must fail closed.
             # A faulty adapter has the same fail-closed outcome as an absent
             # authoritative decision service.
             from policy import AuthorizationDecision
@@ -184,7 +249,14 @@ def _protected_database_write(dependencies: WorkflowDependencies) -> Node:
                 reason_code="AUTHORIZATION_ADAPTER_FAILED",
                 source="authorization-adapter",
             )
-        decision_event_id = dependencies.reporter.governance_decision(decision)
+        # AIGP persists an authoritative decision as
+        # RUNTIME_ACTION_AUTHORIZATION. Local fixtures remain explicitly
+        # labelled educational GOVERNANCE_DECISION evidence.
+        decision_event_id = (
+            dependencies.reporter.governance_decision(decision)
+            if decision.source == "simulated-lab-fixture"
+            else None
+        )
 
         if not decision.allowed:
             if decision.outcome is AuthorizationOutcome.UNAVAILABLE:
@@ -211,7 +283,7 @@ def _protected_database_write(dependencies: WorkflowDependencies) -> Node:
             tool_call_id,
             outcome="SUCCEEDED",
             resource_reference=resource_reference,
-            causation_id=decision_event_id,
+            causation_id=decision.decision_reference or decision_event_id,
         )
         return {
             "outcome": "WRITE_COMPLETED",

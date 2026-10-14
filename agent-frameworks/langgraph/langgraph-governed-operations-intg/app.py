@@ -11,9 +11,11 @@ from governance import (
     AgentsRuntimeClient,
     ExecutionEvidenceReporter,
     FaultInjectingTransport,
+    GovernanceSettings,
 )
 from operations import OperationIntent, OperationRequest, OperationsRepository
 from policy import (
+    AIGPRuntimeActionAuthorizer,
     AuthorizationOutcome,
     SimulatedOperationAuthorizer,
     UnsupportedOperationAuthorizer,
@@ -30,6 +32,7 @@ def parse_args() -> argparse.Namespace:
             "allowed",
             "denied",
             "outage",
+            "aigp",
             "registration-failure",
             "evidence-failure",
         ),
@@ -47,25 +50,40 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="End the run as CANCELLED after the read node, without a write.",
     )
+    parser.add_argument(
+        "--langgraph-run-id",
+        help=(
+            "Actual LangGraph invocation/run ID. The standalone lab generates "
+            "one fresh ID at the invocation boundary when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--langgraph-thread-id",
+        help="Optional LangGraph thread/checkpoint ID; never an AIGP execution ID.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    execution_id = f"langgraph-operations-{uuid4()}"
+    execution_id = args.langgraph_run_id or f"langgraph-operations-{uuid4()}"
     intent = (
         OperationIntent.WRITE
-        if args.scenario in {"allowed", "denied", "outage"}
+        if args.scenario in {"allowed", "denied", "outage", "aigp"}
         else OperationIntent.READ
     )
     request = OperationRequest(
         external_execution_id=execution_id,
         correlation_id=execution_id,
-        actor_id=os.getenv("AI_GOVERNANCE_ACTOR_ID", "operations-assistant"),
+        actor_id=os.getenv(
+            "AI_GOVERNANCE_RUNTIME_ACTOR_ID",
+            os.getenv("AI_GOVERNANCE_ACTOR_ID", "operations-assistant"),
+        ),
         organization_id=os.getenv("AI_GOVERNANCE_ORGANIZATION_ID", "org_default"),
         project_id=os.getenv("AI_GOVERNANCE_PROJECT_ID", "project_default"),
         intent=intent,
         interrupt_after_read=args.interrupt_after_read,
+        langgraph_thread_id=args.langgraph_thread_id,
     )
     repository = OperationsRepository(args.database)
     repository.initialize()
@@ -93,6 +111,18 @@ def main() -> None:
 
 
 def _authorizer_for(scenario: str):
+    if scenario == "aigp":
+        settings = GovernanceSettings.from_environment()
+        if settings is None or settings.runtime_actor_id is None:
+            return UnsupportedOperationAuthorizer()
+        return AIGPRuntimeActionAuthorizer(
+            base_url=settings.base_url,
+            organization_id=settings.organization_id,
+            project_id=settings.project_id,
+            expected_actor_id=settings.runtime_actor_id,
+            access_token=settings.access_token,
+            development_actor_id=settings.actor_id,
+        )
     if scenario == "allowed":
         return SimulatedOperationAuthorizer(AuthorizationOutcome.ALLOW)
     if scenario == "denied":

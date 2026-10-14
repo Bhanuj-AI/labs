@@ -17,10 +17,15 @@ class OperationIntent(str, Enum):
 
 @dataclass(frozen=True)
 class OperationRequest:
-    """Bounded request facts carried by the LangGraph execution.
+    """Bounded facts for one LangGraph invocation.
 
     The request contains identifiers and a proposed operational status only.  It
     deliberately has no prompt, model output, credentials, or raw database row.
+
+    ``external_execution_id`` is the actual LangGraph invocation/run identity
+    submitted to AIGP.  It is retained under its public REST name for
+    compatibility; use :attr:`langgraph_run_id` inside the adapter. A thread is
+    continuity context only and never selects an AIGP execution.
     """
 
     external_execution_id: str
@@ -32,6 +37,14 @@ class OperationRequest:
     record_id: str = "OPS-001"
     requested_status: str = "MAINTENANCE"
     interrupt_after_read: bool = False
+    langgraph_thread_id: str | None = None
+    governance_execution_id: str | None = None
+
+    @property
+    def langgraph_run_id(self) -> str:
+        """Return the runtime invocation identity registered with AIGP."""
+
+        return self.external_execution_id
 
 
 @dataclass(frozen=True)

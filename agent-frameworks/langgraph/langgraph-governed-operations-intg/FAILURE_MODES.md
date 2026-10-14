@@ -6,6 +6,8 @@ This guide keeps agent execution and AIGP evidence delivery separate. LangGraph 
 | --- | --- | --- | --- | --- |
 | Registration unavailable | `registration-failure` | Read completes; `OPS-001` remains `PENDING`. | Reporter becomes `DEGRADED`; it cannot append events or fabricate a terminal execution. | CLI prints `READ_COMPLETED`, `DEGRADED`, and no AIGP execution ID. |
 | Event ingestion unavailable | `evidence-failure` | Read completes; `OPS-001` remains `PENDING`. | Registration was accepted, then each event delivery retries at most three times. Reporter becomes `DEGRADED` and does not send a terminal success. | CLI prints `READ_COMPLETED`, `DEGRADED`; retrieved execution is incomplete rather than falsely completed. |
+| AIGP authorization unavailable or malformed | `aigp` with a timeout, rejected response, unavailable service, or missing SDK/configuration | Protected write fails closed; `OPS-001` remains `PENDING`. | AIGP may have no accepted authorization event. When execution evidence is still healthy, the adapter records bounded `AuthorizationUnavailable` error evidence and finalizes `FAILED`. | CLI prints `GOVERNANCE_UNAVAILABLE`; never treat a retryable evidence status as authorization. |
+| AIGP authorization denied or expired | `aigp` with no matching active policy, a deny, expired response, or binding mismatch | No SQLite mutation or `TOOL_CALL`. | AIGP retains `RUNTIME_ACTION_AUTHORIZATION` decision evidence when it returned a decision; denial is a handled workflow outcome. | CLI prints `WRITE_DENIED`; inspect the reason code and decision event. |
 | Simulated authorizer unavailable | `outage` | Protected write fails closed; `OPS-001` remains `PENDING`. | When delivery is healthy, records the local simulated `GOVERNANCE_DECISION`, bounded `AuthorizationUnavailable` `ERROR`, then finalizes `FAILED`. | CLI prints `GOVERNANCE_UNAVAILABLE`; retrieved terminal status is `FAILED`. |
 | Simulated authorization denied | `denied` | No SQLite tool call or mutation; `OPS-001` remains `PENDING`. | When delivery is healthy, records the simulated denial and finalizes `SUCCEEDED` because the denial is a handled workflow outcome. No `TOOL_CALL` is emitted because no tool was invoked. | CLI prints `WRITE_DENIED`; decision source is `simulated-lab-fixture`. |
 | Interrupted lifecycle | `readonly --interrupt-after-read` | No write occurs; `OPS-001` remains `PENDING`. | Emits bounded interruption error evidence when supported, then finalizes `CANCELLED`. | CLI prints `INTERRUPTED`; retrieved terminal status is `CANCELLED`. |
@@ -25,6 +27,8 @@ The real-API pytest case is deliberately opt-in: it requires `BHANUJ_LAB_INTEGRA
 ## What this guide does not recover
 
 - It does not retry or compensate a SQLite mutation after an evidence-delivery failure.
-- It does not claim that accepted evidence proves an authoritative authorization decision: all allow, deny, and outage decisions are local simulations.
+- It does not claim that accepted `TOOL_CALL` evidence proves the external
+  resource stayed unchanged after authorization; AIGP is a time-of-check
+  decision service and the LangGraph boundary performs enforcement.
 - It does not demonstrate causal audit, evidence sealing, deterministic replay, or counterfactual replay.
 - It does not access BHANUJ persistence directly to repair, query, or alter evidence.
