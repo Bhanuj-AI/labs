@@ -117,7 +117,13 @@ def _runtime_contracts(
             self.client = client
             self.actor_id = actor_id
 
-        def require_allow(self, request: Request) -> Any:
+        def require_allow(
+            self,
+            request: Request,
+            *,
+            actual_tool_arguments_digest: str,
+        ) -> Any:
+            self.actual_tool_arguments_digest = actual_tool_arguments_digest
             resolved = self.client.authorize(request)
             if reject_allow or resolved.outcome.value != "ALLOW":
                 raise RuntimeError(resolved.reason_code)
@@ -129,6 +135,7 @@ def _runtime_contracts(
             enforcer_type=Enforcer,
             request_type=Request,
             resource_type=Resource,
+            tool_arguments_digest=lambda values: f"digest:{values['record_id']}:{values['requested_status']}",
             blocked_exception_type=RuntimeError,
         ),
         Client,
@@ -171,6 +178,9 @@ def _request(intent: OperationIntent, **kwargs: object) -> OperationRequest:
         "organization_id": "org_default",
         "project_id": "project_default",
         "intent": intent,
+        "governance_delegation_id": "delegation-001",
+        "governance_delegation_version": "1",
+        "governance_delegation_digest": "sha256:" + "a" * 64,
     }
     values.update(kwargs)
     return OperationRequest(**values)  # type: ignore[arg-type]
@@ -336,8 +346,53 @@ def test_authoritative_authorizer_binds_canonical_execution_and_scope(
     assert client.request.execution_id == "aigp-execution-001"
     assert client.request.action_id == "operations.update_status"
     assert client.request.resource.resource_reference == "operational-record:OPS-001"
-    assert client.request.context == {"intent": "WRITE", "requested_status": "MAINTENANCE"}
+    assert client.request.context == {}
+    assert client.request.delegation_id == "delegation-001"
+    assert client.request.tool_arguments_digest == "digest:OPS-001:MAINTENANCE"
     assert not hasattr(client.request, "actor_id")
+
+
+def test_authoritative_adapter_uses_separate_issuer_credential_for_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def issue(url: str, headers: dict[str, str], payload: dict[str, object]):
+        captured.update(url=url, headers=headers, payload=payload)
+        return {
+            "delegation_id": "delegation-001",
+            "version": "1",
+            "contract_digest": "sha256:" + "b" * 64,
+        }
+
+    monkeypatch.setattr("policy._post_json", issue)
+    authorizer = AIGPRuntimeActionAuthorizer(
+        base_url="http://governance.test",
+        organization_id="org_default",
+        project_id="project_default",
+        expected_actor_id="runtime-service",
+        access_token="runtime-token",
+        delegation_issuer_access_token="issuer-token",
+        delegation_issuer_actor_id="delegation-issuer",
+    )
+
+    bound = authorizer.bind_delegation(
+        _request(OperationIntent.WRITE, governance_execution_id="aigp-execution-001")
+    )
+
+    assert captured["url"] == "http://governance.test/api/v1/runtime-action-delegations"
+    assert captured["headers"] == {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer issuer-token",
+        "X-AI-Governance-Organization-Id": "org_default",
+        "X-AI-Governance-Project-Id": "project_default",
+        "X-AI-Governance-Actor-Id": "delegation-issuer",
+        "X-Correlation-Id": "corr-operations-test-001",
+        "X-Request-Id": "langgraph-operations-test-001:delegate",
+    }
+    assert captured["payload"]["runtime_actor_id"] == "runtime-service"  # type: ignore[index]
+    assert bound.governance_delegation_digest == "sha256:" + "b" * 64
 
 
 def test_authoritative_denial_cannot_mutate_sqlite_or_emit_fixture_decision(

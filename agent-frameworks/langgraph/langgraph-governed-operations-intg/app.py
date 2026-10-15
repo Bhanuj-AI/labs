@@ -122,6 +122,8 @@ def _authorizer_for(scenario: str):
             expected_actor_id=settings.runtime_actor_id,
             access_token=settings.access_token,
             development_actor_id=settings.actor_id,
+            delegation_issuer_access_token=settings.delegation_issuer_access_token,
+            delegation_issuer_actor_id=settings.delegation_issuer_actor_id,
         )
     if scenario == "allowed":
         return SimulatedOperationAuthorizer(AuthorizationOutcome.ALLOW)

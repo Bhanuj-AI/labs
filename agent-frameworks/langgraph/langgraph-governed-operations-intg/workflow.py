@@ -120,6 +120,7 @@ def run_workflow(
         request,
         governance_execution_id=reporter.execution_id,
     )
+    invocation_request = _bind_delegation(invocation_request, dependencies.authorizer)
     try:
         state = build_workflow(dependencies).invoke({"request": invocation_request})
     except InterruptedExecution:
@@ -175,6 +176,7 @@ async def run_workflow_async(
         request,
         governance_execution_id=reporter.execution_id,
     )
+    invocation_request = _bind_delegation(invocation_request, dependencies.authorizer)
     try:
         state = await build_workflow(dependencies).ainvoke(
             {"request": invocation_request}
@@ -210,6 +212,21 @@ def _result(
         evidence_status=reporter.status,
         evidence_error=reporter.error,
     )
+
+
+def _bind_delegation(
+    request: OperationRequest,
+    authorizer: OperationAuthorizer,
+) -> OperationRequest:
+    """Permit only an explicit issuer-capable adapter to attach a grant."""
+    binder = getattr(authorizer, "bind_delegation", None)
+    if not callable(binder):
+        return request
+    try:
+        bound = binder(request)
+    except Exception:  # noqa: BLE001 - a failed issuer must fail closed later.
+        return request
+    return bound if isinstance(bound, OperationRequest) else request
 
 
 def _read_record(dependencies: WorkflowDependencies) -> Node:

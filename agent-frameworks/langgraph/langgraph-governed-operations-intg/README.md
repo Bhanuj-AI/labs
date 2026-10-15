@@ -250,10 +250,27 @@ metadata:
 ```
 
 Use structured policy conditions such as `action.id`, `resource.type`,
-`resource.reference`, `actor.id`, or bounded `context.intent`. AIGP maps an
-`APPROVE` rule to `ALLOW`; `REJECT` and `BLOCK` to `DENY`. See the control-plane
+`resource.reference`, `actor.id`, or trusted `delegation.*` facts. Agent
+context may only further restrict a decision; it cannot authorize a write.
+AIGP maps an `APPROVE` rule to `ALLOW`; `REJECT` and `BLOCK` to `DENY`. See the control-plane
 [Runtime Action Authorization guide](../../../../ai-governance-oss/docs/tutorials/runtime-action-authorization.md)
 for the full policy contract.
+
+The `aigp` scenario also needs an issuer principal distinct from the runtime
+authorization principal. It calls `POST /api/v1/runtime-action-delegations`
+after execution registration and before the protected write. That issuer must
+hold `runtime_action_delegation.issue` and be allowed by an active
+`runtime_action_delegation_issuance` policy for the exact action/resource and
+runtime actor. Do not reuse the runtime token for these variables:
+
+```bash
+export AI_GOVERNANCE_DELEGATION_ISSUER_ACTOR_ID="delegation-service-subject"
+export AI_GOVERNANCE_DELEGATION_ISSUER_ACCESS_TOKEN="issuer-access-token"
+```
+
+The runtime request carries only the returned delegation ID, version, digest,
+and a digest of the exact SQLite update arguments. Purpose or authority claims
+from an agent are not inputs that can broaden authorization.
 
 Run the real protected-write scenario while the API and policy remain
 configured:
@@ -281,7 +298,8 @@ The adapter uses these verified OSS contracts:
 | --- | --- | --- |
 | Execution start | `POST /api/v1/agent-executions` | LangGraph execution/correlation IDs, workflow metadata |
 | Node lifecycle | `POST /api/v1/agent-executions/{id}/events` with `WORKFLOW_STEP` | Stable step ID, lifecycle, `source_kind=langgraph.node` |
-| Runtime authorization | `POST /api/v1/runtime-action-authorizations/authorize` | Canonical execution ID, registered action/resource, bounded context, idempotency key |
+| Delegation issuance | `POST /api/v1/runtime-action-delegations` | Separate issuer credential; canonical execution, runtime actor, exact action/resource scope, expiry, immutable digest |
+| Runtime authorization | `POST /api/v1/runtime-action-authorizations/authorize` | Canonical execution ID, returned delegation binding, registered action/resource, exact tool-argument digest, idempotency key |
 | Protected tool | The same event endpoint with `TOOL_CALL` | Tool-call context, action name, bounded resource reference, outcome |
 | Offline fixture decision | The same event endpoint with `GOVERNANCE_DECISION` | Simulation source, outcome, reason code; never claimed as AIGP policy output |
 | Failure | The same event endpoint with `ERROR` | Error class and bounded reason code |

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from operations import OperationRequest
 
@@ -64,6 +68,8 @@ class AIGPRuntimeActionAuthorizer:
         expected_actor_id: str,
         access_token: str | None = None,
         development_actor_id: str | None = None,
+        delegation_issuer_access_token: str | None = None,
+        delegation_issuer_actor_id: str | None = None,
     ) -> None:
         if not expected_actor_id:
             raise ValueError("expected_actor_id is required for protected tools.")
@@ -73,12 +79,82 @@ class AIGPRuntimeActionAuthorizer:
         self._expected_actor_id = expected_actor_id
         self._access_token = access_token
         self._development_actor_id = development_actor_id
+        self._delegation_issuer_access_token = delegation_issuer_access_token
+        self._delegation_issuer_actor_id = delegation_issuer_actor_id
+
+    def bind_delegation(self, request: OperationRequest) -> OperationRequest:
+        """Ask the separately authorized application principal to issue a grant.
+
+        The runtime authorization credential is never reused here. If the
+        issuer credentials are absent or the control plane rejects issuance,
+        the request remains unbound and the protected write fails closed.
+        """
+        if request.governance_execution_id is None:
+            return request
+        if (
+            self._delegation_issuer_access_token is None
+            or self._delegation_issuer_actor_id is None
+        ):
+            return request
+        payload = {
+            "schema_version": "runtime-action-delegation/v1",
+            "execution_id": request.governance_execution_id,
+            "runtime_actor_id": self._expected_actor_id,
+            "permissions": [
+                {
+                    "action_id": "operations.update_status",
+                    "resource_type": "sqlite.row",
+                    "resource_references": [
+                        f"operational-record:{request.record_id}"
+                    ],
+                }
+            ],
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+            "idempotency_key": (
+                f"{request.langgraph_run_id}:delegate:operations.update_status:"
+                f"{request.record_id}"
+            ),
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._delegation_issuer_access_token}",
+            "X-AI-Governance-Organization-Id": self._organization_id,
+            "X-AI-Governance-Project-Id": self._project_id,
+            "X-AI-Governance-Actor-Id": self._delegation_issuer_actor_id,
+            "X-Correlation-Id": request.correlation_id,
+            "X-Request-Id": f"{request.langgraph_run_id}:delegate",
+        }
+        try:
+            issued = _post_json(
+                f"{self._base_url}/api/v1/runtime-action-delegations",
+                headers,
+                payload,
+            )
+            return replace(
+                request,
+                governance_delegation_id=str(issued["delegation_id"]),
+                governance_delegation_version=str(issued["version"]),
+                governance_delegation_digest=str(issued["contract_digest"]),
+            )
+        except (HTTPError, URLError, KeyError, TypeError, ValueError):
+            return request
 
     def authorize(self, request: OperationRequest) -> AuthorizationDecision:
         if request.governance_execution_id is None:
             return AuthorizationDecision(
                 outcome=AuthorizationOutcome.UNAVAILABLE,
                 reason_code="AIGP_EXECUTION_REGISTRATION_UNAVAILABLE",
+                source="aigp-runtime-action-authorization",
+            )
+        if (
+            request.governance_delegation_id is None
+            or request.governance_delegation_version is None
+            or request.governance_delegation_digest is None
+        ):
+            return AuthorizationDecision(
+                outcome=AuthorizationOutcome.UNAVAILABLE,
+                reason_code="AIGP_RUNTIME_DELEGATION_UNAVAILABLE",
                 source="aigp-runtime-action-authorization",
             )
 
@@ -91,6 +167,11 @@ class AIGPRuntimeActionAuthorizer:
                 source="aigp-runtime-action-authorization",
             )
         try:
+            tool_arguments = {
+                "record_id": request.record_id,
+                "requested_status": request.requested_status,
+            }
+            tool_arguments_digest = contracts.tool_arguments_digest(tool_arguments)
             authorization_request = contracts.request_type(
                 execution_id=request.governance_execution_id,
                 correlation_id=request.correlation_id,
@@ -98,10 +179,11 @@ class AIGPRuntimeActionAuthorizer:
                 resource=contracts.resource_type(
                     "sqlite.row", f"operational-record:{request.record_id}"
                 ),
-                context={
-                    "intent": request.intent.value,
-                    "requested_status": request.requested_status,
-                },
+                delegation_id=request.governance_delegation_id,
+                delegation_version=request.governance_delegation_version,
+                delegation_digest=request.governance_delegation_digest,
+                tool_arguments_digest=tool_arguments_digest,
+                context={},
                 idempotency_key=(
                     f"{request.langgraph_run_id}:authorize:"
                     f"operations.update_status:{request.record_id}"
@@ -116,7 +198,10 @@ class AIGPRuntimeActionAuthorizer:
             authorizer = contracts.enforcer_type(
                 captured, actor_id=self._expected_actor_id
             )
-            decision = authorizer.require_allow(authorization_request)
+            decision = authorizer.require_allow(
+                authorization_request,
+                actual_tool_arguments_digest=tool_arguments_digest,
+            )
         except contracts.blocked_exception_type as error:
             captured_decision = captured.decision
             if (
@@ -181,6 +266,7 @@ class _RuntimeAuthorizationContracts:
     enforcer_type: type[Any]
     request_type: type[Any]
     resource_type: type[Any]
+    tool_arguments_digest: Any
     blocked_exception_type: type[Exception]
 
 
@@ -206,6 +292,7 @@ def _runtime_authorization_contracts() -> _RuntimeAuthorizationContracts:
             ProtectedOperationBlocked,
             RuntimeActionAuthorizationRequest,
             RuntimeActionResource,
+            canonical_tool_arguments_digest,
         )
     except ImportError as error:
         raise RuntimeError(
@@ -217,6 +304,7 @@ def _runtime_authorization_contracts() -> _RuntimeAuthorizationContracts:
         enforcer_type=LangGraphOperationAuthorizer,
         request_type=RuntimeActionAuthorizationRequest,
         resource_type=RuntimeActionResource,
+        tool_arguments_digest=canonical_tool_arguments_digest,
         blocked_exception_type=ProtectedOperationBlocked,
     )
 
@@ -233,3 +321,21 @@ def _decision_from_aigp(decision: Any) -> AuthorizationDecision:
         source="aigp-runtime-action-authorization",
         decision_reference=str(decision.decision_id),
     )
+
+
+def _post_json(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, object],
+) -> dict[str, object]:
+    request = Request(
+        url,
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urlopen(request, timeout=5) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError("AIGP delegation endpoint returned malformed JSON.")
+    return result

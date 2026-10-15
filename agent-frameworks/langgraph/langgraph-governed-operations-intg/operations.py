@@ -39,6 +39,9 @@ class OperationRequest:
     interrupt_after_read: bool = False
     langgraph_thread_id: str | None = None
     governance_execution_id: str | None = None
+    governance_delegation_id: str | None = None
+    governance_delegation_version: str | None = None
+    governance_delegation_digest: str | None = None
 
     @property
     def langgraph_run_id(self) -> str:

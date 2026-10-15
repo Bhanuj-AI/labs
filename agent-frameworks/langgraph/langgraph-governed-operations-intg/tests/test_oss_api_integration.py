@@ -119,8 +119,20 @@ def test_running_oss_api_authorizes_a_langgraph_sqlite_mutation(tmp_path: Path) 
     actor_id = settings.runtime_actor_id or settings.actor_id
     if actor_id is None:
         pytest.skip("Set the runtime actor ID for the configured authenticated principal.")
+    if (
+        settings.delegation_issuer_actor_id is None
+        or settings.delegation_issuer_access_token is None
+    ):
+        pytest.skip(
+            "Set separate BHANUJ_LAB_INTEGRATION_DELEGATION_ISSUER_* credentials."
+        )
 
     policy_id = _create_authorization_policy(settings, actor_id)
+    issuance_policy_id = _create_delegation_issuance_policy(
+        settings,
+        settings.delegation_issuer_actor_id,
+        actor_id,
+    )
     external_execution_id = f"langgraph-oss-authorized-{uuid4()}"
     reporter = ExecutionEvidenceReporter(
         AgentsRuntimeClient(settings),
@@ -144,6 +156,8 @@ def test_running_oss_api_authorizes_a_langgraph_sqlite_mutation(tmp_path: Path) 
         expected_actor_id=actor_id,
         access_token=settings.access_token,
         development_actor_id=settings.actor_id,
+        delegation_issuer_access_token=settings.delegation_issuer_access_token,
+        delegation_issuer_actor_id=settings.delegation_issuer_actor_id,
     )
 
     try:
@@ -178,6 +192,11 @@ def test_running_oss_api_authorizes_a_langgraph_sqlite_mutation(tmp_path: Path) 
             f"/api/v1/policies/{policy_id}/versions/1/archive",
             {"archived_by": actor_id},
         )
+        _post_json(
+            settings,
+            f"/api/v1/policies/{issuance_policy_id}/versions/1/archive",
+            {"archived_by": settings.delegation_issuer_actor_id},
+        )
 
 
 def _integration_settings() -> GovernanceSettings:
@@ -205,6 +224,12 @@ def _integration_settings() -> GovernanceSettings:
         runtime_actor_id=(
             os.getenv("BHANUJ_LAB_INTEGRATION_RUNTIME_ACTOR_ID")
             or os.getenv("BHANUJ_LAB_INTEGRATION_ACTOR_ID", "local-admin")
+        ),
+        delegation_issuer_actor_id=os.getenv(
+            "BHANUJ_LAB_INTEGRATION_DELEGATION_ISSUER_ACTOR_ID"
+        ),
+        delegation_issuer_access_token=os.getenv(
+            "BHANUJ_LAB_INTEGRATION_DELEGATION_ISSUER_ACCESS_TOKEN"
         ),
     )
 
@@ -253,6 +278,56 @@ def _create_authorization_policy(settings: GovernanceSettings, actor_id: str) ->
         settings,
         f"/api/v1/policies/{policy_id}/versions/1/activate",
         {"activated_by": actor_id},
+    )
+    return policy_id
+
+
+def _create_delegation_issuance_policy(
+    settings: GovernanceSettings,
+    issuer_actor_id: str,
+    runtime_actor_id: str,
+) -> str:
+    response = _post_json(
+        settings,
+        "/api/v1/policies",
+        {
+            "name": f"LangGraph runtime delegation issuer {uuid4()}",
+            "description": "Ephemeral local delegation-issuance policy.",
+            "organization_id": settings.organization_id,
+            "project_id": settings.project_id,
+            "category": "SECURITY",
+            "owner": issuer_actor_id,
+            "created_by": issuer_actor_id,
+            "target_types": ["AgentExecution"],
+            "rules": [
+                {
+                    "rule_id": "allow-operations-delegation",
+                    "name": "Allow bounded operations delegation",
+                    "conditions": [
+                        {"field_path": "issuer.id", "operator": "EQUALS", "expected_value": issuer_actor_id},
+                        {"field_path": "runtime_actor.id", "operator": "EQUALS", "expected_value": runtime_actor_id},
+                        {"field_path": "action.id", "operator": "EQUALS", "expected_value": "operations.update_status"},
+                        {"field_path": "resource.type", "operator": "EQUALS", "expected_value": "sqlite.row"},
+                        {"field_path": "resource.reference", "operator": "EQUALS", "expected_value": "operational-record:OPS-001"},
+                    ],
+                    "effect": "APPROVE",
+                    "reason_template": "Allow this bounded runtime delegation.",
+                    "priority": 10,
+                    "severity": "LOW",
+                }
+            ],
+            "metadata": {
+                "runtime_action_delegation_issuance": {
+                    "purpose": "runtime_action_delegation_issuance"
+                }
+            },
+        },
+    )
+    policy_id = str(response["policy_id"])
+    _post_json(
+        settings,
+        f"/api/v1/policies/{policy_id}/versions/1/activate",
+        {"activated_by": issuer_actor_id},
     )
     return policy_id
 

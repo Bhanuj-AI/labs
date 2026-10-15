@@ -51,6 +51,8 @@ class GovernanceSettings:
     actor_id: str | None = None
     access_token: str | None = None
     runtime_actor_id: str | None = None
+    delegation_issuer_actor_id: str | None = None
+    delegation_issuer_access_token: str | None = None
 
     @classmethod
     def from_environment(cls) -> GovernanceSettings | None:
@@ -78,6 +80,12 @@ class GovernanceSettings:
             runtime_actor_id=(
                 os.getenv("AI_GOVERNANCE_RUNTIME_ACTOR_ID")
                 or os.getenv("AI_GOVERNANCE_ACTOR_ID")
+            ),
+            delegation_issuer_actor_id=os.getenv(
+                "AI_GOVERNANCE_DELEGATION_ISSUER_ACTOR_ID"
+            ),
+            delegation_issuer_access_token=os.getenv(
+                "AI_GOVERNANCE_DELEGATION_ISSUER_ACCESS_TOKEN"
             ),
         )
 
