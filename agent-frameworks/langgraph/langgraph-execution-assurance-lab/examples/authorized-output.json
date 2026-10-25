@@ -1,0 +1,14 @@
+{
+  "after": "APPROVED",
+  "before": "PENDING",
+  "correlation_id": "banking-assurance-example",
+  "evidence_chain": {
+    "authorization": "decision-example",
+    "execution_receipt": "receipt-event-example",
+    "private_snapshot": "langgraph://replays/banking-assurance-example",
+    "replay_manifest_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tool_call": "banking-assurance-example:approve"
+  },
+  "execution_id": "aigp-execution-id",
+  "scenario": "authorized"
+}
