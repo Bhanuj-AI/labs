@@ -82,23 +82,25 @@ external mutation is independently true.
 cd labs/agent-frameworks/langgraph/langgraph-execution-assurance-lab
 python -m venv .venv
 . .venv/bin/activate
+```
+
+4. Install the pinned Plugin API and the released LangGraph replay adapter
+into the environment that runs the replay worker. It is not an OSS or lab
+dependency on the foundational lab:
+
+```sh
 python -m pip install --no-cache-dir --upgrade -r requirements.txt
 ```
 
-4. Install the released Plugin API and separately owned LangGraph replay
-adapter into the environment that runs the replay worker. It is not an OSS or
-lab dependency on the foundational lab:
+`requirements.txt` installs
+`aigp-langgraph-replay-adapter` from the public GitHub release tag `v0.1.0`.
+It intentionally does not use an editable checkout. Verify the resolved
+artifact if needed:
 
 ```sh
-pip install -e ../../../../adapters/aigp-langgraph-replay-adapter
+python -m pip show aigp-langgraph-replay-adapter
+python -c "from importlib.metadata import version; assert version('aigp-langgraph-replay-adapter') == '0.1.0'"
 export AIGP_LANGGRAPH_REPLAY_SNAPSHOT_DB=/tmp/aigp-langgraph-private-snapshots.db
-```
-
-When developing the Plugin API itself rather than using a released contract,
-replace the first command with:
-
-```sh
-pip install -e ../../../../ai-governance-oss/packages/bhanuj-governance-plugin-api
 ```
 
 The private snapshot database is runtime-owned. Do not mount it into the OSS

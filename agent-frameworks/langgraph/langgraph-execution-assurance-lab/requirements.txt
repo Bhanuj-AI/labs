@@ -1,3 +1,4 @@
 langgraph>=0.2,<1
 pytest>=8,<9
 bhanuj-governance-plugin-api==1.1.1
+aigp-langgraph-replay-adapter @ git+https://github.com/Bhanuj-AI/aigp-langgraph-replay-adapter.git@v0.1.0
