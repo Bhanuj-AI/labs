@@ -38,7 +38,7 @@ only `lookup_policy`. Neither agent can create further subagents.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - An Anthropic API key and access to your selected Claude model
 - `ANTHROPIC_API_KEY` and `CLAUDE_MODEL` in the environment
 - Optionally, a running BHANUJ OSS instance for Agents Runtime evidence

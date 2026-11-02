@@ -1,0 +1,7 @@
+{
+  "POL-1001": {
+    "status": "ACTIVE",
+    "coverage_limit": 5000,
+    "claim_can_proceed": true
+  }
+}

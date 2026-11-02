@@ -33,6 +33,7 @@ class GovernanceSettings:
     base_url: str
     organization_id: str
     project_id: str
+    access_token: str | None = None
 
     @classmethod
     def from_environment(cls) -> "GovernanceSettings | None":
@@ -54,6 +55,7 @@ class GovernanceSettings:
             base_url=str(values["AI_GOVERNANCE_BASE_URL"]).rstrip("/"),
             organization_id=str(values["AI_GOVERNANCE_ORGANIZATION_ID"]),
             project_id=str(values["AI_GOVERNANCE_PROJECT_ID"]),
+            access_token=os.getenv("AI_GOVERNANCE_ACCESS_TOKEN") or None,
         )
 
 
@@ -67,6 +69,8 @@ class AgentsRuntimeClient:
         headers = {"Content-Type": "application/json"}
         headers["X-AI-Governance-Organization-Id"] = self._settings.organization_id
         headers["X-AI-Governance-Project-Id"] = self._settings.project_id
+        if self._settings.access_token:
+            headers["Authorization"] = f"Bearer {self._settings.access_token}"
         request = urllib.request.Request(
             f"{self._settings.base_url}{path}",
             data=json.dumps(body).encode("utf-8"),

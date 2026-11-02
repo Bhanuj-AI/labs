@@ -32,7 +32,7 @@ Useful Claude references: [Agent SDK Python guide](https://code.claude.com/docs/
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - An Anthropic API key with access to the model you select
 - `ANTHROPIC_API_KEY` and `CLAUDE_MODEL` set in your shell
 - Optionally, a running BHANUJ OSS instance for Agents Runtime evidence
