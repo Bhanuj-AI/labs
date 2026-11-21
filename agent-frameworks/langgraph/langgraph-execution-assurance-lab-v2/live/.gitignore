@@ -1,0 +1,9 @@
+# Runtime-owned evidence stays on the lab host and is never committed.
+runtime-data/*
+!runtime-data/.gitkeep
+
+# Capture summaries contain only identifiers, bounded references, and digests.
+artifacts/*
+!artifacts/.gitkeep
+
+.venv/
