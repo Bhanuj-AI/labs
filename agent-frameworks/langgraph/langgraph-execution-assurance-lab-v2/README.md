@@ -21,7 +21,7 @@ this lab.
 
 ## What you will verify
 
-The tests use the public `v0.2.0` adapter tag and a real LangGraph `ToolNode`.
+The tests use the public `v0.3.0` adapter tag and a real LangGraph `ToolNode`.
 They show that:
 
 1. recorded private evidence is returned without invoking the original tool;
@@ -39,7 +39,7 @@ python -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade -r requirements.txt
 
-python -c "from importlib.metadata import version; assert version('aigp-langgraph-replay-adapter') == '0.2.0'"
+python -c "from importlib.metadata import version; assert version('aigp-langgraph-replay-adapter') == '0.3.0'"
 python -c "from importlib.metadata import version; assert version('bhanuj-governance-plugin-api') == '1.2.0rc1'"
 
 PYTHONPATH=. python -m pytest -q
@@ -95,3 +95,59 @@ with the worker in `ai-governance-oss/tests/unit/test_replay_execution.py`.
 The separation is intentional: this lab proves local ToolNode interception;
 the worker independently decides whether returned evidence is sufficient for a
 governed replay result.
+
+## Live Docker tutorial
+
+The `live/` companion runs the complete path against the local Docker stack:
+
+1. it records one synthetic `account_lookup` ToolNode call in AIGP OSS;
+2. it saves the raw tool arguments and two synthetic evidence values only in
+   `live/runtime-data/langgraph-v2-snapshots.db`;
+3. it creates and activates a reference-only replacement policy;
+4. it queues a Causal Audit; and
+5. the opt-in worker resolves the planned call through a real ToolNode without
+   loading or calling an original tool implementation.
+
+First rebuild the platform with the Core validation change, then build only the
+replay worker with the external adapter and its private snapshot mount:
+
+```sh
+cd ai-governance-oss
+docker compose build ai-governance-platform
+docker compose -f docker-compose.yml -f docker-compose.langgraph-v2.yml \
+  build ai-governance-replay-worker
+docker compose -f docker-compose.yml -f docker-compose.langgraph-v2.yml \
+  up -d --force-recreate ai-governance-platform ai-governance-replay-worker
+```
+
+Set the normal local tenant, actor, and short-lived service-token variables.
+`AIGP_RUNTIME_TOKEN` may be omitted when the same service identity is allowed
+to record execution evidence and administer the intervention policy. Tokens do
+not belong in a shell history, a capture file, or this repository.
+
+```sh
+export AIGP_BASE_URL=http://localhost:8000
+export AIGP_ORGANIZATION_ID=org_default
+export AIGP_PROJECT_ID=project_default
+export AIGP_RUNTIME_ACTOR_ID=<runtime-service-actor>
+export AIGP_ISSUER_ACTOR_ID=<policy-admin-actor>
+export AIGP_ISSUER_TOKEN=<short-lived-token>
+# Optional when the runtime uses a distinct service identity:
+# export AIGP_RUNTIME_TOKEN=<short-lived-token>
+
+cd ../labs/agent-frameworks/langgraph/langgraph-execution-assurance-lab-v2
+python -m venv live/.venv
+. live/.venv/bin/activate
+python -m pip install -r requirements.txt
+python live/run_live_lab.py full
+```
+
+The final JSON names the Studio execution, Causal Audit, and Replay views for
+screen capture. It deliberately contains IDs, opaque references, and digests
+only. The SQLite snapshot is ignored by Git and mounted read-only into the
+worker alone; neither the API nor Studio can read it.
+
+The live tutorial is still a declared `langgraph.tool-node` boundary. It proves
+evidence resolution for ToolNode calls and worker-side evidence validation. It
+does not intercept custom graph nodes, direct SDK calls, provider-hosted tools,
+or arbitrary workflow code, and it is not sandbox-level isolation.
