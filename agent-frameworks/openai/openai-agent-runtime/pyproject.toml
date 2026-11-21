@@ -5,7 +5,7 @@ description = "External OpenAI Responses API runtime for governed controlled Rep
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bhanuj-governance-plugin-api>=1.0,<2",
+    "bhanuj-governance-plugin-api>=1.2.0rc1,<2",
     "fastapi>=0.115",
     "httpx>=0.28",
     # OSS's current TruLens integration is compatible with the official 1.x

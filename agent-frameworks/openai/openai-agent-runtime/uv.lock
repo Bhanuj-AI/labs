@@ -46,11 +46,11 @@ wheels = [
 
 [[package]]
 name = "bhanuj-governance-plugin-api"
-version = "1.0.0"
+version = "1.2.0rc1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0d/dd/29941618860fec3cbc810a2ea5e37cb643afb6d4ca427b13f651ad51f22a/bhanuj_governance_plugin_api-1.0.0.tar.gz", hash = "sha256:851c86ff001a880807102eccbfd0eb88dd87d786dcf6ab61aaf28839137185a0", size = 5805, upload-time = "2026-09-23T12:49:37.756Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/3b/82871126b175e771b7c54a7ced59b677c427fd9a0a2d193f09c1aa520e77/bhanuj_governance_plugin_api-1.2.0rc1.tar.gz", hash = "sha256:a2ce8aeb1f7929d682ee9dca0300145b2e9b0fac9081349fb4998b6d73f4e205", size = 25696, upload-time = "2026-11-19T23:06:58.161Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/28/43ba1f285fc8cbc1f825cd35b219398e045b05e49dd7e60c109014a6815b/bhanuj_governance_plugin_api-1.0.0-py3-none-any.whl", hash = "sha256:5691be95e3abed9b3819b0935e5e768575d2c577a50db3b9fb2963acdccafd6e", size = 7005, upload-time = "2026-09-23T12:49:36.546Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/d8/0fd37d4a20a60f0da8da9929b1487b080af2c30a607d1a72c41b407ae356/bhanuj_governance_plugin_api-1.2.0rc1-py3-none-any.whl", hash = "sha256:ffb590afa4c5559d5d91d88a531d702392007f3eb8b2f119e632818a6f7202ae", size = 28720, upload-time = "2026-11-19T23:06:57.028Z" },
 ]
 
 [[package]]
@@ -294,7 +294,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bhanuj-governance-plugin-api", specifier = ">=1.0,<2" },
+    { name = "bhanuj-governance-plugin-api", specifier = ">=1.2.0rc1,<2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "openai", specifier = ">=1.52.1,<2.0.0" },
