@@ -21,7 +21,7 @@ this lab.
 
 ## What you will verify
 
-The tests use the public `v0.3.0` adapter tag and a real LangGraph `ToolNode`.
+The tests use the public `v0.3.1` adapter tag and a real LangGraph `ToolNode`.
 They show that:
 
 1. recorded private evidence is returned without invoking the original tool;
@@ -39,7 +39,7 @@ python -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade -r requirements.txt
 
-python -c "from importlib.metadata import version; assert version('aigp-langgraph-replay-adapter') == '0.3.0'"
+python -c "from importlib.metadata import version; assert version('aigp-langgraph-replay-adapter') == '0.3.1'"
 python -c "from importlib.metadata import version; assert version('bhanuj-governance-plugin-api') == '1.2.0rc1'"
 
 PYTHONPATH=. python -m pytest -q
@@ -108,15 +108,23 @@ The `live/` companion runs the complete path against the local Docker stack:
 5. the opt-in worker resolves the planned call through a real ToolNode without
    loading or calling an original tool implementation.
 
-First rebuild the platform with the Core validation change, then build only the
-replay worker with the external adapter and its private snapshot mount:
+First rebuild the platform with the Core validation change. The adapter
+repository owns the development-only worker overlay and private snapshot mount:
 
 ```sh
-cd ai-governance-oss
+# From adapters/aigp-langgraph-replay-adapter.
+export AIGP_LANGGRAPH_REPLAY_ADAPTER_DIR="$(pwd)"
+export AIGP_LANGGRAPH_REPLAY_SNAPSHOT_DIR="$(cd ../../labs/agent-frameworks/langgraph/langgraph-execution-assurance-lab-v2/live/runtime-data && pwd)"
+export AIGP_BASE_WORKER_IMAGE=ai-governance-platform:local
+export AIGP_LANGGRAPH_REPLAY_WORKER_IMAGE=ai-governance-platform-langgraph-v2:local
+
+cd ../../ai-governance-oss
 docker compose build ai-governance-platform
-docker compose -f docker-compose.yml -f docker-compose.langgraph-v2.yml \
+docker compose -f docker-compose.yml \
+  -f ../adapters/aigp-langgraph-replay-adapter/docker-compose.replay-worker.yml \
   build ai-governance-replay-worker
-docker compose -f docker-compose.yml -f docker-compose.langgraph-v2.yml \
+docker compose -f docker-compose.yml \
+  -f ../adapters/aigp-langgraph-replay-adapter/docker-compose.replay-worker.yml \
   up -d --force-recreate ai-governance-platform ai-governance-replay-worker
 ```
 
